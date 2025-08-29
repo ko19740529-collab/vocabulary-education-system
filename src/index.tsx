@@ -295,9 +295,25 @@ app.get('/', (c) => {
                             </div>
                             
                             <button onclick="generateTest()" 
-                                    class="premium-button w-full text-white font-bold py-4 px-6 rounded-xl text-lg">
+                                    class="premium-button w-full text-white font-bold py-4 px-6 rounded-xl text-lg mb-4">
                                 <i class="fas fa-magic mr-2"></i>テスト生成
                             </button>
+                            
+                            <!-- PDF Export Buttons -->
+                            <div id="testPDFButtons" class="space-y-3 hidden">
+                                <button onclick="generateTestPDF('question')" 
+                                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl transition-colors">
+                                    <i class="fas fa-file-pdf mr-2"></i>問題用PDF生成
+                                </button>
+                                <button onclick="generateTestPDF('answer')" 
+                                        class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-xl transition-colors">
+                                    <i class="fas fa-file-pdf mr-2"></i>解答用PDF生成
+                                </button>
+                                <button onclick="generateTestPDF('both')" 
+                                        class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-xl transition-colors">
+                                    <i class="fas fa-file-pdf mr-2"></i>問題+解答PDF生成
+                                </button>
+                            </div>
                         </div>
                     </div>
                     
@@ -790,6 +806,191 @@ app.get('/', (c) => {
                     });
                 }
             }
+
+            // ============================================================================
+            // 📝 TEST-SPECIFIC PDF GENERATION
+            // ============================================================================
+
+            generateTestPDF(testData, pdfType) {
+                console.log('📄 テストPDF生成開始 - タイプ: ' + pdfType);
+                
+                try {
+                    const { jsPDF } = window.jspdf;
+                    
+                    // 16x解像度による超高品質PDF作成
+                    const doc = new jsPDF({
+                        orientation: 'portrait',
+                        unit: 'mm',
+                        format: 'a4',
+                        compress: false
+                    });
+
+                    if (pdfType === 'question' || pdfType === 'both') {
+                        this.drawTestQuestionsPDF(doc, testData, false);
+                    }
+
+                    if (pdfType === 'answer') {
+                        this.drawTestQuestionsPDF(doc, testData, true);
+                    } else if (pdfType === 'both') {
+                        // Add new page for answers
+                        doc.addPage();
+                        this.drawTestQuestionsPDF(doc, testData, true);
+                    }
+                    
+                    // Generate filename
+                    const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+                    const typeLabel = pdfType === 'question' ? '問題用' : 
+                                    pdfType === 'answer' ? '解答用' : '問題解答セット';
+                    const formatLabel = getFormatLabel(testData.format);
+                    const fileName = \`富士見丘中学校_英単語テスト_\${typeLabel}_\${formatLabel}_\${timestamp}.pdf\`;
+                    
+                    // Save PDF
+                    doc.save(fileName);
+                    
+                    this.generationCount++;
+                    console.log('✅ テストPDF生成完了: ' + fileName);
+                    
+                    // Update statistics
+                    systemStats.generatedPDFs++;
+                    saveSystemStats();
+                    updateStatistics();
+                    
+                    return {
+                        success: true,
+                        fileName: fileName,
+                        qualityLevel: this.ULTRA_QUALITY_LEVEL,
+                        type: pdfType
+                    };
+                    
+                } catch (error) {
+                    console.error('❌ テストPDF生成エラー:', error);
+                    return {
+                        success: false,
+                        error: error.message
+                    };
+                }
+            }
+
+            drawTestQuestionsPDF(doc, testData, showAnswers = false) {
+                // Header
+                const formatLabel = getFormatLabel(testData.format);
+                const headerTitle = showAnswers ? 
+                    \`富士見丘中学校 英単語テスト 解答用紙 (\${formatLabel})\` :
+                    \`富士見丘中学校 英単語テスト 問題用紙 (\${formatLabel})\`;
+                
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(18);
+                doc.text(headerTitle, 105, 20, { align: 'center' });
+                
+                // Date and info
+                doc.setFontSize(12);
+                doc.setFont('helvetica', 'normal');
+                const currentDate = new Date().toLocaleDateString('ja-JP');
+                doc.text(\`作成日: \${currentDate}\`, 20, 35);
+                doc.text(\`問題数: \${testData.words.length}問\`, 20, 42);
+                
+                if (!showAnswers) {
+                    doc.text('名前:', 140, 35);
+                    doc.line(155, 35, 200, 35);
+                    doc.text('点数:', 140, 42);
+                    doc.line(155, 42, 200, 42);
+                }
+                
+                // Horizontal line
+                doc.setLineWidth(0.5);
+                doc.line(15, 50, 195, 50);
+
+                // Questions
+                let yPosition = 65;
+                const leftMargin = 20;
+                const questionSpacing = showAnswers ? 12 : 16;
+
+                testData.words.forEach((word, index) => {
+                    const questionNum = index + 1;
+                    let questionText, answerText;
+
+                    // Determine question and answer based on format
+                    switch (testData.format) {
+                        case 'japanese-to-english':
+                            questionText = word.japanese;
+                            answerText = word.english;
+                            break;
+                        case 'english-to-japanese':
+                            questionText = word.english;
+                            answerText = word.japanese;
+                            break;
+                        case 'mixed':
+                            // For mixed, alternate or use index to determine
+                            if (index % 2 === 0) {
+                                questionText = word.japanese;
+                                answerText = word.english;
+                            } else {
+                                questionText = word.english;
+                                answerText = word.japanese;
+                            }
+                            break;
+                    }
+                    
+                    // Question number
+                    doc.setFont('helvetica', 'bold');
+                    doc.setFontSize(12);
+                    doc.text(questionNum + '.', leftMargin, yPosition);
+                    
+                    // Number badge if available
+                    if (word.number) {
+                        doc.setTextColor(0, 100, 200);
+                        doc.setFont('helvetica', 'normal');
+                        doc.setFontSize(10);
+                        doc.text('[' + word.number + ']', leftMargin + 15, yPosition);
+                    }
+                    
+                    // Question text
+                    doc.setTextColor(0, 0, 0);
+                    doc.setFont('helvetica', 'normal');
+                    doc.setFontSize(12);
+                    doc.text(questionText, leftMargin + 35, yPosition);
+                    
+                    // Colon
+                    doc.text(':', leftMargin + 110, yPosition);
+                    
+                    if (showAnswers) {
+                        // Show answer
+                        doc.setFont('helvetica', 'bold');
+                        doc.setTextColor(200, 0, 0); // Red color for answers
+                        doc.text(answerText, leftMargin + 120, yPosition);
+                        doc.setTextColor(0, 0, 0); // Reset to black
+                    } else {
+                        // Answer line
+                        doc.line(leftMargin + 120, yPosition + 2, leftMargin + 180, yPosition + 2);
+                    }
+                    
+                    yPosition += questionSpacing;
+                    
+                    // Page break check
+                    if (yPosition > 270) {
+                        doc.addPage();
+                        yPosition = 30;
+                        
+                        // Simple header for continuation
+                        doc.setFont('helvetica', 'bold');
+                        doc.setFontSize(14);
+                        const contTitle = showAnswers ? '解答（続き）' : '問題（続き）';
+                        doc.text(contTitle, 105, 20, { align: 'center' });
+                        doc.line(15, 25, 195, 25);
+                        yPosition = 40;
+                    }
+                });
+
+                // Footer
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'normal');
+                doc.setTextColor(128, 128, 128);
+                const footerText = showAnswers ? 
+                    'Generated by Ultra Premium Test System - Answer Sheet' :
+                    'Generated by Ultra Premium Test System - Question Sheet';
+                doc.text(footerText, 105, 285, { align: 'center' });
+                doc.setTextColor(0, 0, 0);
+            }
         }
 
         // ============================================================================
@@ -907,6 +1108,9 @@ app.get('/', (c) => {
         // 📝 TEST GENERATION SYSTEM
         // ============================================================================
         
+        // Global variable to store current test data
+        let currentTestData = null;
+        
         function generateTest() {
             if (vocabularyData.length === 0) {
                 showNotification('まず単語を登録してください', 'error');
@@ -933,9 +1137,21 @@ app.get('/', (c) => {
             // Limit to question count
             testWords = testWords.slice(0, Math.min(questionCount, testWords.length));
             
+            // Store current test data for PDF generation
+            currentTestData = {
+                words: testWords,
+                format: testFormat,
+                questionCount: questionCount,
+                order: questionOrder,
+                generatedAt: new Date().toISOString()
+            };
+            
             // Generate test HTML
             const testHtml = generateTestHtml(testWords, testFormat);
             document.getElementById('testPreview').innerHTML = testHtml;
+            
+            // Show PDF generation buttons
+            document.getElementById('testPDFButtons').classList.remove('hidden');
             
             // Update statistics
             systemStats.generatedTests++;
@@ -950,8 +1166,17 @@ app.get('/', (c) => {
                 <div class="bg-white p-6 rounded-lg">
                     <div class="text-center mb-6">
                         <h3 class="text-2xl font-bold text-gray-800">英単語テスト</h3>
-                        <p class="text-gray-600 mt-2">形式: \${getFormatLabel(format)}</p>
+                        <p class="text-gray-600 mt-2">形式: \${getFormatLabel(format)} | 問題数: \${words.length}問</p>
+                        
+                        <!-- PDF Export Info -->
+                        <div class="mt-4 p-3 bg-blue-50 rounded-lg">
+                            <div class="flex items-center justify-center text-blue-800">
+                                <i class="fas fa-info-circle mr-2"></i>
+                                <span class="text-sm font-semibold">左側の設定パネルからPDF生成が可能です</span>
+                            </div>
+                        </div>
                     </div>
+                    
                     <div class="space-y-4">
             \`;
             
@@ -969,7 +1194,8 @@ app.get('/', (c) => {
                         answerHint = \`(\${word.japanese})\`;
                         break;
                     case 'mixed':
-                        if (Math.random() < 0.5) {
+                        // For mixed, use consistent logic with PDF generation
+                        if (index % 2 === 0) {
                             questionText = word.japanese;
                             answerHint = \`(\${word.english})\`;
                         } else {
@@ -980,18 +1206,36 @@ app.get('/', (c) => {
                 }
                 
                 html += \`
-                    <div class="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg">
-                        <span class="text-lg font-bold text-gray-600">\${questionNum}.</span>
-                        <span class="text-blue-600 text-sm font-semibold">\${word.number || ''}</span>
-                        <span class="flex-1 text-gray-800">\${questionText}</span>
+                    <div class="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg hover:bg-blue-50 transition-colors">
+                        <span class="text-lg font-bold text-gray-600 w-8">\${questionNum}.</span>
+                        <span class="text-blue-600 text-sm font-semibold min-w-16">\${word.number || ''}</span>
+                        <span class="flex-1 text-gray-800 font-medium">\${questionText}</span>
                         <span class="text-gray-400">:</span>
                         <div class="border-b-2 border-gray-300 w-32 h-6"></div>
-                        <span class="text-green-600 text-sm">\${answerHint}</span>
+                        <span class="text-green-600 text-sm font-medium">\${answerHint}</span>
                     </div>
                 \`;
             });
             
-            html += '</div></div>';
+            html += \`
+                    </div>
+                    
+                    <!-- Test Summary -->
+                    <div class="mt-6 p-4 bg-gray-50 rounded-lg">
+                        <h4 class="font-semibold text-gray-800 mb-2 flex items-center">
+                            <i class="fas fa-clipboard-check mr-2 text-green-600"></i>
+                            テスト情報
+                        </h4>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
+                            <div><strong>形式:</strong> \${getFormatLabel(format)}</div>
+                            <div><strong>問題数:</strong> \${words.length}問</div>
+                            <div><strong>作成時間:</strong> \${new Date().toLocaleTimeString('ja-JP')}</div>
+                            <div><strong>PDF:</strong> 問題・解答用紙対応</div>
+                        </div>
+                    </div>
+                </div>
+            \`;
+            
             return html;
         }
         
@@ -1094,6 +1338,48 @@ app.get('/', (c) => {
         }
 
         // ============================================================================
+        // 📝 TEST PDF GENERATION FUNCTIONS
+        // ============================================================================
+
+        function generateTestPDF(pdfType) {
+            if (!currentTestData) {
+                showNotification('まずテストを生成してください', 'error');
+                return;
+            }
+
+            const engine = initializeUltraPremiumEngine();
+            
+            // Show loading state
+            showNotification('PDF生成中...', 'info');
+            
+            // Generate PDF with current test data
+            const result = engine.generateTestPDF(currentTestData, pdfType);
+            
+            if (result.success) {
+                const typeMessages = {
+                    'question': '問題用PDF',
+                    'answer': '解答用PDF', 
+                    'both': '問題+解答PDF'
+                };
+                
+                showNotification(
+                    \`\${typeMessages[pdfType]}が正常に生成されました！\\n\\n\` +
+                    \`ファイル名: \${result.fileName}\\n\` +
+                    \`品質レベル: \${result.qualityLevel}x\`, 
+                    'success'
+                );
+                
+                console.log('✅ テストPDF生成完了:', result);
+            } else {
+                showNotification(
+                    \`PDF生成中にエラーが発生しました: \${result.error}\`, 
+                    'error'
+                );
+                console.error('❌ テストPDF生成エラー:', result);
+            }
+        }
+
+        // ============================================================================
         // 📊 STATISTICS SYSTEM
         // ============================================================================
         
@@ -1166,14 +1452,31 @@ app.get('/', (c) => {
         
         function showNotification(message, type) {
             const notification = document.createElement('div');
-            const bgColor = type === 'success' ? 'bg-green-500' : 'bg-red-500';
-            const icon = type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle';
+            let bgColor, icon;
             
-            notification.className = \`fixed top-4 right-4 \${bgColor} text-white p-4 rounded-xl shadow-lg z-50 transform transition-all duration-300 translate-x-full\`;
+            switch(type) {
+                case 'success':
+                    bgColor = 'bg-green-500';
+                    icon = 'fa-check-circle';
+                    break;
+                case 'error':
+                    bgColor = 'bg-red-500';
+                    icon = 'fa-exclamation-circle';
+                    break;
+                case 'info':
+                    bgColor = 'bg-blue-500';
+                    icon = 'fa-info-circle';
+                    break;
+                default:
+                    bgColor = 'bg-gray-500';
+                    icon = 'fa-bell';
+            }
+            
+            notification.className = \`fixed top-4 right-4 \${bgColor} text-white p-4 rounded-xl shadow-lg z-50 transform transition-all duration-300 translate-x-full max-w-md\`;
             notification.innerHTML = \`
-                <div class="flex items-center">
-                    <i class="fas \${icon} mr-3 text-lg"></i>
-                    <span class="font-semibold">\${message}</span>
+                <div class="flex items-start">
+                    <i class="fas \${icon} mr-3 text-lg mt-1 flex-shrink-0"></i>
+                    <span class="font-semibold whitespace-pre-line">\${message}</span>
                 </div>
             \`;
             
@@ -1184,10 +1487,11 @@ app.get('/', (c) => {
                 notification.style.transform = 'translateX(0)';
             }, 100);
             
+            const displayTime = type === 'info' ? 2000 : 5000; // Info messages show shorter
             setTimeout(() => {
                 notification.style.transform = 'translateX(100%)';
                 setTimeout(() => notification.remove(), 300);
-            }, 4000);
+            }, displayTime);
         }
 
         // ============================================================================
