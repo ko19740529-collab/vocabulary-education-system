@@ -162,9 +162,17 @@ app.get('/', (c) => {
                     <p class="text-xl text-gray-600 mb-4">+ プレミアムPDF生成機能</p>
                     
                     <!-- Quality Status -->
-                    <div class="inline-flex items-center bg-green-100 text-green-800 px-6 py-2 rounded-full">
+                    <div class="inline-flex items-center bg-green-100 text-green-800 px-6 py-2 rounded-full mb-4">
                         <div class="quality-indicator w-3 h-3 bg-green-500 rounded-full mr-3"></div>
                         <span class="font-semibold">16x超高品質モード有効</span>
+                    </div>
+                    
+                    <!-- Debug PDF Test Button -->
+                    <div class="mt-4">
+                        <button onclick="debugPDFTest()" 
+                                class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm">
+                            🧪 PDF生成デバッグテスト
+                        </button>
                     </div>
                 </div>
             </div>
@@ -560,9 +568,11 @@ app.get('/', (c) => {
                 console.log('🚀 Ultra Premium PDF Engine 初期化開始');
                 console.log('📊 品質レベル: ' + this.ULTRA_QUALITY_LEVEL + 'x');
                 
+                // 初期化フラグを先に設定
+                this.isInitialized = true;
+                
                 this.startQualityMonitoring();
                 this.protectQualityLevel();
-                this.isInitialized = true;
                 
                 console.log('✅ Ultra Premium PDF Engine 初期化完了');
             }
@@ -572,18 +582,12 @@ app.get('/', (c) => {
             // ============================================================================
             
             protectQualityLevel() {
-                // Singletonパターンによる品質保護
-                Object.freeze(this);
-                
-                // 品質レベル変更を監視
+                // 品質レベル変更を監視（初期化完了後に保護）
                 Object.defineProperty(this, 'ULTRA_QUALITY_LEVEL', {
                     value: this.originalQualityLevel,
                     writable: false,
                     configurable: false
                 });
-                
-                // プロトタイプチェーンも保護
-                Object.freeze(UltraPremiumPDFEngine.prototype);
                 
                 console.log('🛡️ 品質劣化防止システム有効化');
             }
@@ -815,7 +819,13 @@ app.get('/', (c) => {
                 console.log('📄 テストPDF生成開始 - タイプ: ' + pdfType);
                 
                 try {
+                    // jsPDFライブラリの確認
+                    if (!window.jspdf) {
+                        throw new Error('jsPDFライブラリが読み込まれていません');
+                    }
+                    
                     const { jsPDF } = window.jspdf;
+                    console.log('✅ jsPDF確認完了:', typeof jsPDF);
                     
                     // 16x解像度による超高品質PDF作成
                     const doc = new jsPDF({
@@ -824,6 +834,8 @@ app.get('/', (c) => {
                         format: 'a4',
                         compress: false
                     });
+                    
+                    console.log('✅ PDF文書オブジェクト作成完了');
 
                     if (pdfType === 'question' || pdfType === 'both') {
                         this.drawTestQuestionsPDF(doc, testData, false);
@@ -841,7 +853,7 @@ app.get('/', (c) => {
                     const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
                     const typeLabel = pdfType === 'question' ? '問題用' : 
                                     pdfType === 'answer' ? '解答用' : '問題解答セット';
-                    const formatLabel = getFormatLabel(testData.format);
+                    const formatLabel = this.getFormatLabel(testData.format);
                     const fileName = \`富士見丘中学校_英単語テスト_\${typeLabel}_\${formatLabel}_\${timestamp}.pdf\`;
                     
                     // Save PDF
@@ -871,9 +883,18 @@ app.get('/', (c) => {
                 }
             }
 
+            getFormatLabel(format) {
+                const labels = {
+                    'japanese-to-english': '日本語→英語',
+                    'english-to-japanese': '英語→日本語',
+                    'mixed': '混合'
+                };
+                return labels[format] || format;
+            }
+
             drawTestQuestionsPDF(doc, testData, showAnswers = false) {
                 // Header
-                const formatLabel = getFormatLabel(testData.format);
+                const formatLabel = this.getFormatLabel(testData.format);
                 const headerTitle = showAnswers ? 
                     \`富士見丘中学校 英単語テスト 解答用紙 (\${formatLabel})\` :
                     \`富士見丘中学校 英単語テスト 問題用紙 (\${formatLabel})\`;
@@ -1342,40 +1363,55 @@ app.get('/', (c) => {
         // ============================================================================
 
         function generateTestPDF(pdfType) {
+            console.log('🎯 generateTestPDF呼び出し - タイプ:', pdfType);
+            
             if (!currentTestData) {
+                console.error('❌ currentTestDataが存在しません');
                 showNotification('まずテストを生成してください', 'error');
                 return;
             }
 
+            console.log('📊 currentTestData確認:', currentTestData);
+            
             const engine = initializeUltraPremiumEngine();
+            console.log('🔧 エンジン初期化完了:', engine);
             
             // Show loading state
             showNotification('PDF生成中...', 'info');
             
             // Generate PDF with current test data
-            const result = engine.generateTestPDF(currentTestData, pdfType);
+            try {
+                const result = engine.generateTestPDF(currentTestData, pdfType);
+                console.log('📄 PDF生成結果:', result);
             
-            if (result.success) {
-                const typeMessages = {
-                    'question': '問題用PDF',
-                    'answer': '解答用PDF', 
-                    'both': '問題+解答PDF'
-                };
-                
+                if (result.success) {
+                    const typeMessages = {
+                        'question': '問題用PDF',
+                        'answer': '解答用PDF', 
+                        'both': '問題+解答PDF'
+                    };
+                    
+                    showNotification(
+                        \`\${typeMessages[pdfType]}が正常に生成されました！\\n\\n\` +
+                        \`ファイル名: \${result.fileName}\\n\` +
+                        \`品質レベル: \${result.qualityLevel}x\`, 
+                        'success'
+                    );
+                    
+                    console.log('✅ テストPDF生成完了:', result);
+                } else {
+                    showNotification(
+                        \`PDF生成中にエラーが発生しました: \${result.error}\`, 
+                        'error'
+                    );
+                    console.error('❌ テストPDF生成エラー:', result);
+                }
+            } catch (error) {
+                console.error('❌ PDF生成処理でエラー:', error);
                 showNotification(
-                    \`\${typeMessages[pdfType]}が正常に生成されました！\\n\\n\` +
-                    \`ファイル名: \${result.fileName}\\n\` +
-                    \`品質レベル: \${result.qualityLevel}x\`, 
-                    'success'
-                );
-                
-                console.log('✅ テストPDF生成完了:', result);
-            } else {
-                showNotification(
-                    \`PDF生成中にエラーが発生しました: \${result.error}\`, 
+                    \`PDF生成処理でエラーが発生しました: \${error.message}\`, 
                     'error'
                 );
-                console.error('❌ テストPDF生成エラー:', result);
             }
         }
 
@@ -1522,12 +1558,81 @@ app.get('/', (c) => {
         }
 
         // ============================================================================
+        // 🧪 PDF GENERATION TEST FUNCTION
+        // ============================================================================
+        
+        function testPDFGeneration() {
+            console.log('🧪 PDF生成テスト開始');
+            
+            try {
+                // jsPDF確認
+                if (!window.jspdf) {
+                    console.error('❌ jsPDFが読み込まれていません');
+                    return false;
+                }
+                
+                const { jsPDF } = window.jspdf;
+                console.log('✅ jsPDF確認:', typeof jsPDF);
+                
+                // 簡単なPDF作成テスト
+                const doc = new jsPDF();
+                doc.text('PDF生成テスト', 20, 20);
+                console.log('✅ 簡易PDF作成成功');
+                
+                return true;
+            } catch (error) {
+                console.error('❌ PDF生成テストエラー:', error);
+                return false;
+            }
+        }
+
+        function debugPDFTest() {
+            console.log('🔍 デバッグPDFテスト実行');
+            
+            try {
+                if (!window.jspdf) {
+                    showNotification('jsPDFライブラリが読み込まれていません', 'error');
+                    return;
+                }
+                
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                
+                // 基本テスト
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(18);
+                doc.text('🧪 PDF生成デバッグテスト', 20, 30);
+                
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(12);
+                doc.text('これは日本語テストです', 20, 50);
+                doc.text('This is English test', 20, 65);
+                
+                const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+                const fileName = \`PDF_Debug_Test_\${timestamp}.pdf\`;
+                
+                doc.save(fileName);
+                
+                showNotification(\`デバッグPDF生成成功！\\n\\nファイル名: \${fileName}\`, 'success');
+                console.log('✅ デバッグPDF生成完了:', fileName);
+                
+            } catch (error) {
+                console.error('❌ デバッグPDFエラー:', error);
+                showNotification(\`デバッグPDF生成エラー: \${error.message}\`, 'error');
+            }
+        }
+
+        // ============================================================================
         // 🚀 SYSTEM INITIALIZATION
         // ============================================================================
         
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize Premium PDF Engine
             initializeUltraPremiumEngine();
+            
+            // Test PDF generation capability
+            const pdfTestResult = testPDFGeneration();
+            console.log('🧪 PDF生成テスト結果:', pdfTestResult);
             
             // Load and display data
             updateWordList();
