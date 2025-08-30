@@ -1,6 +1,6 @@
 {
   "name": "vocabulary-test-system-v2-premium",
-  "version": "2.1.0", 
+  "version": "2.1.0",
   "description": "英単語テスト作成システム v2.0 + プレミアムPDF生成機能",
   "type": "module",
   "scripts": {
@@ -21,8 +21,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250705.0",
     "@hono/vite-cloudflare-pages": "^0.4.2",
+    "puppeteer": "^24.17.1",
+    "typescript": "^5.0.0",
     "vite": "^5.0.0",
-    "wrangler": "^3.78.0",
-    "typescript": "^5.0.0"
+    "wrangler": "^3.78.0"
   }
 }

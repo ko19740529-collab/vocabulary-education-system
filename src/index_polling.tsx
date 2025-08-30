@@ -9,16 +9,6 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>()
 
-// 🔍 本番用エラーログのみ
-app.use('*', async (c, next) => {
-  try {
-    await next();
-  } catch (error) {
-    console.error(`❌ [${new Date().toISOString()}] ERROR in ${c.req.method} ${c.req.url}:`, error);
-    throw error;
-  }
-});
-
 // Enable CORS
 app.use('/api/*', cors())
 
@@ -37,26 +27,19 @@ const activeSessions = new Map<string, {
   ipAddress: string;
 }>();
 
-// セッションクリーンアップ関数（リクエスト時に実行）
-function cleanupInactiveSessions() {
+// セッションクリーンアップ（5分間非アクティブで削除）
+setInterval(() => {
   const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-  let cleanedCount = 0;
-  
   for (const [sessionId, session] of activeSessions) {
     if (session.lastSeen < fiveMinutesAgo) {
       activeSessions.delete(sessionId);
-      cleanedCount++;
+      console.log(`🧹 非アクティブセッション削除: ${sessionId}`);
     }
   }
-  
-  // セッションクリーンアップは静かに実行
-}
+}, 60 * 1000); // 1分間隔でクリーンアップ
 
 // 🔄 ポーリング用セッション管理API
 app.post('/api/session/heartbeat', (c) => {
-  // クリーンアップ実行
-  cleanupInactiveSessions();
-  
   const sessionId = c.req.header('X-Session-Id') || `session_${Date.now()}_${Math.random().toString(36).substring(2)}`;
   const clientIP = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
   const userAgent = c.req.header('User-Agent') || 'unknown';
@@ -80,18 +63,15 @@ app.post('/api/session/heartbeat', (c) => {
 // 🔄 変更チェック用API（ポーリング用）
 app.get('/api/changes', async (c) => {
   try {
-    // クリーンアップ実行
-    cleanupInactiveSessions();
-    
     const { env } = c;
     const lastCheck = c.req.query('since') || '1970-01-01T00:00:00.000Z';
     
     // 最新の変更をチェック
     const { results: recentChanges } = await env.DB.prepare(`
-      SELECT table_name, record_id, action, change_timestamp, new_data, old_data
+      SELECT table_name, record_id, action, created_at, new_data, old_data
       FROM change_history 
-      WHERE change_timestamp > ? 
-      ORDER BY change_timestamp DESC 
+      WHERE created_at > ? 
+      ORDER BY created_at DESC 
       LIMIT 50
     `).bind(lastCheck).all();
     
@@ -194,6 +174,8 @@ app.post('/api/words', async (c) => {
       WHERE date = DATE('now')
     `).run();
     
+    console.log(`🆕 新単語追加: ${english} → ${japanese} (ID: ${wordId})`);
+    
     return c.json({ success: true, wordId: wordId });
   } catch (error) {
     return c.json({ success: false, error: error.message }, 500);
@@ -235,6 +217,8 @@ app.delete('/api/words/:id', async (c) => {
       WHERE date = DATE('now')
     `).run();
     
+    console.log(`🗑️ 単語削除: ${oldData[0].english} → ${oldData[0].japanese} (ID: ${wordId})`);
+    
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: error.message }, 500);
@@ -261,15 +245,6 @@ app.get('/api/statistics', async (c) => {
   }
 });
 
-// 🚫 廃止されたSSEエンドポイント（ポーリング版では使用不可）
-app.get('/api/sse', (c) => {
-  return c.json({ 
-    success: false, 
-    error: 'SSEはCloudflare Workersでサポートされていません。ポーリング版を使用してください。',
-    message: 'ポーリングベースのリアルタイム同期に切り替えました。'
-  }, 501);
-});
-
 // ============================================================================
 // 🌐 FRONTEND - ポーリング対応リアルタイム同期システム
 // ============================================================================
@@ -282,11 +257,8 @@ app.get('/', (c) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔄 教育用単語管理システム（ポーリング版）- D1リアルタイム v2.1</title>
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
-    <script src="https://cdn.tailwindcss.com?v=${Date.now()}"></script>
+    <title>🔄 教育用単語管理システム（ポーリング版）- D1リアルタイム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     
     <style>
@@ -444,35 +416,6 @@ app.get('/', (c) => {
     <div id="notification" class="notification"></div>
     
     <script>
-        // 🎯 ログレベル管理（本番運用向け）
-        const LOG_LEVEL = {
-            ERROR: 0,   // エラーのみ
-            INFO: 1,    // 重要な情報
-            DEBUG: 2    // 開発時の詳細情報
-        };
-        
-        // 本番環境では INFO レベル、開発環境では DEBUG レベル
-        const CURRENT_LOG_LEVEL = LOG_LEVEL.INFO;
-        
-        // ログ出力関数
-        function logError(message, data = null) {
-            if (CURRENT_LOG_LEVEL >= LOG_LEVEL.ERROR) {
-                console.error('❌', message, data || '');
-            }
-        }
-        
-        function logInfo(message, data = null) {
-            if (CURRENT_LOG_LEVEL >= LOG_LEVEL.INFO) {
-                console.log('ℹ️', message, data || '');
-            }
-        }
-        
-        function logDebug(message, data = null) {
-            if (CURRENT_LOG_LEVEL >= LOG_LEVEL.DEBUG) {
-                console.log('🔍', message, data || '');
-            }
-        }
-
         // 🔄 ポーリング対応グローバル状態管理
         let vocabularyData = [];
         let systemStats = { totalWords: 0 };
@@ -485,14 +428,11 @@ app.get('/', (c) => {
         // 🔄 セッション初期化とハートビート
         async function initializeSession() {
             try {
-                const headers = {};
-                if (sessionId) {
-                    headers['X-Session-Id'] = sessionId;
-                }
-                
                 const response = await fetch('/api/session/heartbeat', {
                     method: 'POST',
-                    headers: headers
+                    headers: {
+                        'X-Session-Id': sessionId
+                    }
                 });
                 
                 const result = await response.json();
@@ -501,13 +441,12 @@ app.get('/', (c) => {
                     sessionId = result.sessionId;
                     onlineUsers = result.totalConnections;
                     updateSyncStatus('connected');
-                    logInfo('セッション初期化完了');
+                    console.log('✅ セッション初期化完了:', sessionId);
                 } else {
                     updateSyncStatus('error');
-                    logError('セッション初期化失敗', result);
                 }
             } catch (error) {
-                logError('セッション初期化エラー', error);
+                console.error('セッション初期化エラー:', error);
                 updateSyncStatus('error');
             }
         }
@@ -515,23 +454,13 @@ app.get('/', (c) => {
         // 🔄 変更チェック（ポーリング）
         async function checkForChanges() {
             try {
-                const headers = {};
-                if (sessionId) {
-                    headers['X-Session-Id'] = sessionId;
-                }
-                
-                logDebug('ポーリング実行', { lastCheck: lastChangeCheck });
-                
                 const response = await fetch('/api/changes?since=' + encodeURIComponent(lastChangeCheck), {
-                    headers: headers
+                    headers: {
+                        'X-Session-Id': sessionId
+                    }
                 });
                 
                 const result = await response.json();
-                
-                logDebug('ポーリング結果', {
-                    changesCount: result.changes ? result.changes.length : 0,
-                    totalWords: result.totalWords
-                });
                 
                 if (result.success) {
                     // セッション情報更新
@@ -540,14 +469,11 @@ app.get('/', (c) => {
                     
                     // 変更があった場合の処理
                     if (result.changes && result.changes.length > 0) {
-                        logInfo('変更検出', result.changes.length + '件の更新');
+                        console.log('🔄 変更を検出:', result.changes.length + '件');
                         
                         // 単語データを再読み込み
                         await loadVocabularyData();
                         updateWordList();
-                        updateStatistics();
-                        
-                        logDebug('UI更新完了', vocabularyData.length + '個の単語');
                         
                         // 変更通知
                         for (const change of result.changes) {
@@ -559,8 +485,6 @@ app.get('/', (c) => {
                                 showNotification('🗑️ 単語削除: ' + data.english + ' → ' + data.japanese, 'info');
                             }
                         }
-                    } else {
-                        logDebug('変更なし', 'totalWords: ' + result.totalWords);
                     }
                     
                     lastChangeCheck = result.timestamp;
@@ -570,7 +494,7 @@ app.get('/', (c) => {
                     updateSyncStatus('error');
                 }
             } catch (error) {
-                logError('ポーリングエラー', error.message);
+                console.error('変更チェックエラー:', error);
                 updateSyncStatus('error');
             }
         }
@@ -579,7 +503,7 @@ app.get('/', (c) => {
         function startPolling() {
             // 3秒間隔でポーリング
             pollingInterval = setInterval(checkForChanges, 3000);
-            logInfo('リアルタイム同期開始', '3秒間隔');
+            console.log('🔄 ポーリング開始（3秒間隔）');
         }
         
         // 同期状態UI更新
@@ -636,13 +560,13 @@ app.get('/', (c) => {
                         usageFrequency: word.usage_frequency,
                         isVerified: word.is_verified
                     }));
-                    logDebug('データ読み込み完了', vocabularyData.length + '個の単語');
+                    console.log('✅ D1から' + vocabularyData.length + '個の単語を読み込みました');
                 } else {
-                    logError('データ読み込み失敗', result.error);
+                    console.error('単語データの読み込みに失敗:', result.error);
                     showNotification('❌ データの読み込みに失敗しました', 'error');
                 }
             } catch (error) {
-                logError('データベース接続エラー', error.message);
+                console.error('D1データ読み込みエラー:', error);
                 showNotification('❌ データベース接続エラー', 'error');
             }
         }
@@ -657,12 +581,12 @@ app.get('/', (c) => {
                     systemStats.totalWords = result.statistics.totalWords;
                 }
             } catch (error) {
-                logError('統計データ読み込みエラー', error.message);
+                console.error('統計データ読み込みエラー:', error);
             }
         }
         
-        // 🗄️ D1 API対応: 単語追加（共有データベース） - グローバル関数
-        window.addWord = async function() {
+        // 🗄️ D1 API対応: 単語追加（共有データベース）
+        async function addWord() {
             const japanese = document.getElementById('newJapanese').value.trim();
             const english = document.getElementById('newEnglish').value.trim();
             
@@ -672,18 +596,12 @@ app.get('/', (c) => {
             }
             
             try {
-                const headers = {
-                    'Content-Type': 'application/json'
-                };
-                if (sessionId) {
-                    headers['X-Session-Id'] = sessionId;
-                }
-                
-                logDebug('単語追加開始', { english, japanese });
-                
                 const response = await fetch('/api/words', {
                     method: 'POST',
-                    headers: headers,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': sessionId
+                    },
                     body: JSON.stringify({
                         japanese,
                         english,
@@ -704,61 +622,44 @@ app.get('/', (c) => {
                     document.getElementById('newEnglish').value = '';
                     
                     showNotification('✅ 単語が追加されました: ' + english + ' → ' + japanese, 'success');
-                    logInfo('単語追加成功', english + ' → ' + japanese);
                     
-                    // 即座にUI更新（ポーリングを待たない）
-                    await loadVocabularyData();
-                    updateWordList();
-                    updateStatistics();
-                    
-                    // 追加でポーリングも実行（他のクライアント用）
+                    // すぐに変更をチェック（リアルタイム感を向上）
                     setTimeout(checkForChanges, 500);
                     
                 } else {
-                    logError('単語追加失敗', result.error);
                     showNotification('❌ エラー: ' + result.error, 'error');
                 }
                 
             } catch (error) {
-                logError('単語追加エラー', error.message);
+                console.error('単語追加エラー:', error);
                 showNotification('❌ ネットワークエラーが発生しました', 'error');
             }
         }
         
-        // 🗄️ D1 API対応: 単語削除（共有データベース） - グローバル関数
-        window.deleteWord = async function(id) {
+        // 🗄️ D1 API対応: 単語削除（共有データベース）
+        async function deleteWord(id) {
             try {
-                const headers = {};
-                if (sessionId) {
-                    headers['X-Session-Id'] = sessionId;
-                }
-                
                 const response = await fetch('/api/words/' + id, {
                     method: 'DELETE',
-                    headers: headers
+                    headers: {
+                        'X-Session-Id': sessionId
+                    }
                 });
                 
                 const result = await response.json();
                 
                 if (result.success) {
                     showNotification('✅ 単語が削除されました', 'success');
-                    logInfo('単語削除成功', 'ID: ' + id);
                     
-                    // 即座にUI更新（ポーリングを待たない）
-                    await loadVocabularyData();
-                    updateWordList();
-                    updateStatistics();
-                    
-                    // 追加でポーリングも実行（他のクライアント用）
+                    // すぐに変更をチェック
                     setTimeout(checkForChanges, 500);
                     
                 } else {
-                    logError('単語削除失敗', result.error);
                     showNotification('❌ エラー: ' + result.error, 'error');
                 }
                 
             } catch (error) {
-                logError('単語削除エラー', error.message);
+                console.error('単語削除エラー:', error);
                 showNotification('❌ 削除に失敗しました', 'error');
             }
         }
@@ -797,10 +698,9 @@ app.get('/', (c) => {
             }
         }
         
-        // 手動更新 - グローバル関数
-        window.manualRefresh = async function() {
+        // 手動更新
+        async function manualRefresh() {
             showNotification('🔄 データを手動更新中...', 'info');
-            logInfo('手動更新実行');
             await checkForChanges();
             showNotification('✅ データが更新されました', 'success');
         }
@@ -844,12 +744,13 @@ app.get('/', (c) => {
         
         // 🔄 ポーリング版システム初期化
         document.addEventListener('DOMContentLoaded', async () => {
-            logInfo('教育用単語管理システム起動開始');
+            console.log('🚀 教育用単語管理システム（ポーリング版）起動開始...');
             
             // 初期セッション設定
             await initializeSession();
             
             // データ読み込み
+            console.log('📊 D1データベースからデータ読み込み中...');
             await loadVocabularyData();
             await loadSystemStatistics();
             
@@ -860,7 +761,10 @@ app.get('/', (c) => {
             // ポーリング開始
             startPolling();
             
-            logInfo('システム起動完了', vocabularyData.length + '個の単語を読み込み');
+            console.log('🎉 教育用単語管理システム（ポーリング版）完全起動完了');
+            console.log('📚 ' + vocabularyData.length + '個の単語がD1データベースから読み込まれました');
+            console.log('🔄 3秒間隔でリアルタイム同期開始');
+            console.log('🌐 30名同時アクセス対応');
         });
         
         // エンターキーでの追加
@@ -872,8 +776,6 @@ app.get('/', (c) => {
                 }
             }
         });
-        
-
         
         // ページ離脱時のクリーンアップ
         window.addEventListener('beforeunload', () => {

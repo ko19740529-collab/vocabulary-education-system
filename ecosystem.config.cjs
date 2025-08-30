@@ -1,10 +1,11 @@
 // PM2 Configuration for 英単語テストシステム v2.0 Premium
+// PM2 Configuration for 教育用単語管理システム（共有版）
 module.exports = {
   apps: [
     {
-      name: 'vocabulary-test-premium',
+      name: 'vocabulary-education-system',
       script: 'npx',
-      args: 'wrangler pages dev dist --ip 0.0.0.0 --port 3000',
+      args: 'wrangler pages dev dist --d1=vocabulary-education-system --local --ip 0.0.0.0 --port 3000',
       cwd: '/home/user/webapp',
       env: {
         NODE_ENV: 'development',
