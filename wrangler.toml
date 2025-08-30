@@ -1,0 +1,10 @@
+name = "vocabulary-education-system-v2"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "npm run build"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "vocabulary-education-system"
+database_id = "local-development-db"
