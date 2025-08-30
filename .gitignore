@@ -31,3 +31,12 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# Deployment files
+*.tar.gz
+cloudflare-pages-deploy.tar.gz
+deploy-files.tar.gz
+
+# Logs
+logs/
+*.log
